@@ -1,13 +1,10 @@
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
-
 from pathlib import Path
 
 import requests
@@ -23,13 +20,9 @@ GITHUB_REPO = "DesktopCompanion"
 PROJECT_DIR = Path(__file__).resolve().parent
 
 VERSION_FILE = PROJECT_DIR / "version.json"
-
 BACKUP_DIR = PROJECT_DIR / "backups"
-
 UPDATE_DIR = PROJECT_DIR / "update_temp"
-
 HEALTH_FILE = PROJECT_DIR / ".companion_healthy"
-
 UPDATE_LOCK = PROJECT_DIR / ".update_lock"
 
 APP_FILE = PROJECT_DIR / "app.py"
@@ -41,7 +34,7 @@ GITHUB_API = (
 
 
 # ============================================================
-# FILES THAT ARE ALLOWED TO BE UPDATED
+# ONLY THESE FILES CAN BE UPDATED
 # ============================================================
 
 UPDATEABLE_FILES = {
@@ -50,16 +43,6 @@ UPDATEABLE_FILES = {
     "database.py",
     "web_search.py",
     "version.json",
-}
-
-
-# ============================================================
-# PROTECTED FILES
-# ============================================================
-
-PROTECTED_FILES = {
-    ".env",
-    ".gitignore",
 }
 
 
@@ -79,9 +62,8 @@ def get_current_version():
 
             data = json.load(file)
 
-        return data.get(
-            "version",
-            "0.0.0"
+        return str(
+            data.get("version", "0.0.0")
         )
 
     except Exception:
@@ -99,30 +81,28 @@ def version_tuple(version):
 
     parts = version.split(".")
 
-    result = []
+    numbers = []
 
     for part in parts[:3]:
 
         try:
-            result.append(
+
+            numbers.append(
                 int(part)
             )
 
         except ValueError:
 
-            result.append(0)
+            numbers.append(0)
 
-    while len(result) < 3:
+    while len(numbers) < 3:
 
-        result.append(0)
+        numbers.append(0)
 
-    return tuple(result)
+    return tuple(numbers)
 
 
-def is_newer(
-    current,
-    latest
-):
+def is_newer(current, latest):
 
     return (
         version_tuple(latest)
@@ -132,7 +112,7 @@ def is_newer(
 
 
 # ============================================================
-# GITHUB API
+# GITHUB
 # ============================================================
 
 def github_headers():
@@ -164,7 +144,7 @@ def get_latest_release():
 
 
 # ============================================================
-# CHECK UPDATE
+# UPDATE CHECK
 # ============================================================
 
 def check_for_update():
@@ -198,7 +178,7 @@ def check_for_update():
                 "latest": None,
                 "release": release,
                 "message":
-                    "Release has no version tag."
+                    "GitHub release has no tag."
             }
 
         latest = tag.lstrip("v")
@@ -232,7 +212,7 @@ def check_for_update():
                 )
         }
 
-    except Exception as e:
+    except Exception as error:
 
         return {
             "update": False,
@@ -240,12 +220,12 @@ def check_for_update():
             "latest": None,
             "release": None,
             "message":
-                f"Update check failed: {e}"
+                f"Update check failed: {error}"
         }
 
 
 # ============================================================
-# FIND RELEASE ASSETS
+# FIND RELEASE FILES
 # ============================================================
 
 def find_update_assets(
@@ -368,9 +348,7 @@ def verify_sha256(
         .lower()
     )
 
-    return (
-        expected == actual
-    )
+    return expected == actual
 
 
 # ============================================================
@@ -380,6 +358,7 @@ def verify_sha256(
 def create_backup():
 
     BACKUP_DIR.mkdir(
+        parents=True,
         exist_ok=True
     )
 
@@ -415,12 +394,10 @@ def create_backup():
 
 
 # ============================================================
-# RESTORE BACKUP
+# RESTORE
 # ============================================================
 
-def restore_backup(
-    backup
-):
+def restore_backup(backup):
 
     if not backup.exists():
 
@@ -447,7 +424,7 @@ def restore_backup(
 
 
 # ============================================================
-# CLEAN TEMPORARY FILES
+# CLEANUP
 # ============================================================
 
 def cleanup():
@@ -470,18 +447,27 @@ def cleanup():
 # EXTRACT UPDATE
 # ============================================================
 
-def extract_update(
-    zip_path
-):
+def extract_update(zip_path):
 
-    if UPDATE_DIR.exists():
+    # IMPORTANT:
+    # The ZIP stays directly inside UPDATE_DIR.
+    # Extracted files go into UPDATE_DIR/files.
+    # This prevents the ZIP from being deleted
+    # before extraction.
+
+    extract_dir = (
+        UPDATE_DIR /
+        "files"
+    )
+
+    if extract_dir.exists():
 
         shutil.rmtree(
-            UPDATE_DIR,
+            extract_dir,
             ignore_errors=True
         )
 
-    UPDATE_DIR.mkdir(
+    extract_dir.mkdir(
         parents=True,
         exist_ok=True
     )
@@ -491,13 +477,11 @@ def extract_update(
         "r"
     ) as archive:
 
-        names = archive.namelist()
-
-        for name in names:
+        for name in archive.namelist():
 
             path = Path(name)
 
-            # Prevent ZIP path traversal
+            # ZIP path traversal protection
             if (
                 path.is_absolute()
                 or ".." in path.parts
@@ -509,12 +493,13 @@ def extract_update(
 
             filename = path.name
 
+            # Only extract approved files
             if filename not in UPDATEABLE_FILES:
 
                 continue
 
             destination = (
-                UPDATE_DIR /
+                extract_dir /
                 filename
             )
 
@@ -539,6 +524,11 @@ def extract_update(
 
 def validate_update():
 
+    extract_dir = (
+        UPDATE_DIR /
+        "files"
+    )
+
     required = {
         "app.py",
         "database.py",
@@ -549,19 +539,18 @@ def validate_update():
     for filename in required:
 
         path = (
-            UPDATE_DIR /
+            extract_dir /
             filename
         )
 
         if not path.exists():
 
             raise RuntimeError(
-                f"Update is missing: "
-                f"{filename}"
+                f"Update is missing: {filename}"
             )
 
     with open(
-        UPDATE_DIR /
+        extract_dir /
         "version.json",
         "r",
         encoding="utf-8"
@@ -569,9 +558,11 @@ def validate_update():
 
         data = json.load(file)
 
-    if not data.get(
+    new_version = data.get(
         "version"
-    ):
+    )
+
+    if not new_version:
 
         raise RuntimeError(
             "Update has an invalid version."
@@ -584,10 +575,15 @@ def validate_update():
 
 def install_update():
 
+    extract_dir = (
+        UPDATE_DIR /
+        "files"
+    )
+
     for filename in UPDATEABLE_FILES:
 
         source = (
-            UPDATE_DIR /
+            extract_dir /
             filename
         )
 
@@ -612,9 +608,15 @@ def start_companion():
 
     if HEALTH_FILE.exists():
 
-        HEALTH_FILE.unlink()
+        try:
 
-    process = subprocess.Popen(
+            HEALTH_FILE.unlink()
+
+        except Exception:
+
+            pass
+
+    return subprocess.Popen(
         [
             sys.executable,
             str(APP_FILE)
@@ -622,18 +624,16 @@ def start_companion():
         cwd=str(PROJECT_DIR)
     )
 
-    return process
-
 
 def wait_for_health(
     process,
-    timeout=15
+    timeout=20
 ):
 
-    start = time.time()
+    start_time = time.time()
 
     while (
-        time.time() - start
+        time.time() - start_time
         < timeout
     ):
 
@@ -641,10 +641,7 @@ def wait_for_health(
 
             return True
 
-        if (
-            process.poll()
-            is not None
-        ):
+        if process.poll() is not None:
 
             return False
 
@@ -654,7 +651,7 @@ def wait_for_health(
 
 
 # ============================================================
-# UPDATE PROCESS
+# PERFORM UPDATE
 # ============================================================
 
 def perform_update(
@@ -681,8 +678,8 @@ def perform_update(
     try:
 
         print(
-            f"Preparing update "
-            f"to {latest_version}..."
+            f"Preparing update to "
+            f"{latest_version}..."
         )
 
         zip_asset, checksum_asset = (
@@ -706,6 +703,14 @@ def perform_update(
                 "was not found."
             )
 
+        # Start clean temporary directory
+        if UPDATE_DIR.exists():
+
+            shutil.rmtree(
+                UPDATE_DIR,
+                ignore_errors=True
+            )
+
         UPDATE_DIR.mkdir(
             parents=True,
             exist_ok=True
@@ -723,12 +728,18 @@ def perform_update(
             f"{latest_version}.zip.sha256"
         )
 
+        # ----------------------------------------------------
+        # DOWNLOAD
+        # ----------------------------------------------------
+
         print(
             "Downloading update..."
         )
 
         download_file(
-            zip_asset["browser_download_url"],
+            zip_asset[
+                "browser_download_url"
+            ],
             zip_path
         )
 
@@ -742,6 +753,10 @@ def perform_update(
             ],
             checksum_path
         )
+
+        # ----------------------------------------------------
+        # VERIFY
+        # ----------------------------------------------------
 
         print(
             "Verifying SHA-256..."
@@ -760,6 +775,10 @@ def perform_update(
             "SHA-256 verified."
         )
 
+        # ----------------------------------------------------
+        # EXTRACT
+        # ----------------------------------------------------
+
         print(
             "Checking update package..."
         )
@@ -774,11 +793,19 @@ def perform_update(
             "Update package is valid."
         )
 
+        # ----------------------------------------------------
+        # BACKUP
+        # ----------------------------------------------------
+
         print(
             "Creating backup..."
         )
 
         backup = create_backup()
+
+        # ----------------------------------------------------
+        # INSTALL
+        # ----------------------------------------------------
 
         print(
             "Installing update..."
@@ -786,24 +813,38 @@ def perform_update(
 
         install_update()
 
+        # ----------------------------------------------------
+        # START
+        # ----------------------------------------------------
+
         print(
             "Starting updated companion..."
         )
 
         process = start_companion()
 
+        # ----------------------------------------------------
+        # HEALTH CHECK
+        # ----------------------------------------------------
+
         print(
             "Running health check..."
         )
 
-        if not wait_for_health(
+        healthy = wait_for_health(
             process
-        ):
+        )
+
+        if not healthy:
 
             raise RuntimeError(
                 "Updated companion failed "
                 "the health check."
             )
+
+        # ----------------------------------------------------
+        # SUCCESS
+        # ----------------------------------------------------
 
         print(
             "======================================"
@@ -833,7 +874,7 @@ def perform_update(
 
         return True
 
-    except Exception as e:
+    except Exception as error:
 
         print(
             "======================================"
@@ -844,24 +885,33 @@ def perform_update(
         )
 
         print(
-            str(e)
+            str(error)
         )
 
-        print(
-            "Restoring previous version..."
-        )
-
+        # Stop failed version
         if process:
 
             try:
 
                 process.terminate()
 
+                process.wait(
+                    timeout=5
+                )
+
             except Exception:
 
                 pass
 
+        # ----------------------------------------------------
+        # ROLLBACK
+        # ----------------------------------------------------
+
         if backup:
+
+            print(
+                "Restoring previous version..."
+            )
 
             restore_backup(
                 backup
@@ -869,6 +919,21 @@ def perform_update(
 
             print(
                 "Rollback completed."
+            )
+
+            # Restart old version
+            try:
+
+                start_companion()
+
+            except Exception:
+
+                pass
+
+        else:
+
+            print(
+                "No backup was created."
             )
 
         cleanup()
@@ -885,31 +950,7 @@ def perform_update(
 
 
 # ============================================================
-# AUTOMATIC CHECK
-# ============================================================
-
-def auto_update():
-
-    result = check_for_update()
-
-    if not result.get(
-        "update"
-    ):
-
-        return False
-
-    print(
-        result["message"]
-    )
-
-    return perform_update(
-        result["release"],
-        result["latest"]
-    )
-
-
-# ============================================================
-# COMMAND LINE
+# MAIN
 # ============================================================
 
 if __name__ == "__main__":
@@ -933,9 +974,7 @@ if __name__ == "__main__":
         f"{result['current']}"
     )
 
-    if result.get(
-        "latest"
-    ):
+    if result.get("latest"):
 
         print(
             f"Latest version: "
@@ -946,9 +985,7 @@ if __name__ == "__main__":
         result["message"]
     )
 
-    if result.get(
-        "update"
-    ):
+    if result.get("update"):
 
         answer = input(
             "\nInstall this update now? "

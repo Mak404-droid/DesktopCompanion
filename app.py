@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import customtkinter as ctk
 import threading
 import ollama
 import re
+
+PROJECT_DIR = Path(__file__).resolve().parent
 
 from database import (
     initialize_database,
