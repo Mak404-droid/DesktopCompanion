@@ -1,0 +1,12 @@
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+backups/
+updates/
+
+*_backup.py
