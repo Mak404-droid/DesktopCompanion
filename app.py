@@ -1375,6 +1375,26 @@ Keep responses appropriate to the situation.
 
 if __name__ == "__main__":
 
+    health_file = PROJECT_DIR / ".companion_healthy"
+
+    try:
+
+        if health_file.exists():
+            health_file.unlink()
+
+    except Exception:
+        pass
+
     app = DesktopCompanion()
+
+    try:
+
+        health_file.write_text(
+            "healthy",
+            encoding="utf-8"
+        )
+
+    except Exception:
+        pass
 
     app.mainloop()
