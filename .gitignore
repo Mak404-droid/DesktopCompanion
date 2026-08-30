@@ -10,3 +10,5 @@ backups/
 updates/
 
 *_backup.py
+
+release/
